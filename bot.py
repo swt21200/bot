@@ -11,7 +11,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, ChatMember
 from flask import Flask, request, jsonify
 from threading import Thread
 
-# Configuration (အမှန်ပြင်ဆင်ထားသော နေရာ)
+# Configuration
 BOT_TOKEN = "8706727466:AAEYGFLafGWwfRMIpkWx_8GCUr1zqRBimDU"
 GROUP_ID = -1003505610406
 WEB_SERVER_PORT = 5000
@@ -58,7 +58,6 @@ def init_db():
         )
     """)
     
-    # Check and add columns if they don't exist
     try:
         cursor.execute("ALTER TABLE group_invite_links ADD COLUMN joined_user_id INTEGER")
     except sqlite3.OperationalError:
@@ -74,7 +73,6 @@ def init_db():
 def generate_and_store_key(user_id, invite_link_url=None):
     conn = sqlite3.connect("bot_data.db")
     cursor = conn.cursor()
-    # Deactivate any existing keys for this user
     cursor.execute("UPDATE keys SET is_active = 0 WHERE user_id = ?", (user_id,))
     
     new_key = str(uuid.uuid4())
@@ -173,7 +171,7 @@ async def get_invite_link_action(update: Update, context: ContextTypes.DEFAULT_T
             f"🔗 သင်၏ သီးသန့် Invite Link ရပါပြီ-\n\n"
             f"<code>{invite_link_url}</code>\n\n"
             f"⚠️ ဒီ Link က ၁၀ မိနစ်ပဲ ခံပြီး ၁ ယောက်ပဲ Join လို့ရပါမယ်။\n"
-            f"လူ Join တတာနဲ့ သင့်ဆီ Key ပို့ပေးပါ့မယ်။",
+            f"လူ Join တာနဲ့ သင့်ဆီ Key ပို့ပေးပါ့မယ်။",
             parse_mode='HTML'
         )
     except Exception as e:
@@ -189,9 +187,7 @@ async def chat_member_updated_handler(update: Update, context: ContextTypes.DEFA
         
     old_status = result.old_chat_member.status
     new_status = result.new_chat_member.status
-    user_id = result.from_user.id
     
-    # 1. Detect New Join via Invite Link
     if old_status in ["left", "kicked", "both_left"] and new_status in ["member", "administrator", "creator"]:
         invite_link = result.invite_link
         if invite_link:
@@ -202,7 +198,6 @@ async def chat_member_updated_handler(update: Update, context: ContextTypes.DEFA
             
             if invite_data and not invite_data[1]:
                 inviter_user_id = invite_data[0]
-                # Associate the joined user with the invite link
                 cursor.execute("UPDATE group_invite_links SET is_used = 1, joined_user_id = ? WHERE invite_link_url = ?", 
                                (result.new_chat_member.user.id, invite_link.invite_link))
                 conn.commit()
@@ -218,19 +213,16 @@ async def chat_member_updated_handler(update: Update, context: ContextTypes.DEFA
                     logger.error(f"Error sending key: {e}")
             conn.close()
 
-    # 2. Detect Member Left - Revoke Key if the person who joined via link leaves
     elif new_status in ["left", "kicked"]:
         left_user_id = result.new_chat_member.user.id
         conn = sqlite3.connect("bot_data.db")
         cursor = conn.cursor()
         
-        # Find if this user joined via an invite link and who the inviter was
         cursor.execute("SELECT inviter_user_id, invite_link_url FROM group_invite_links WHERE joined_user_id = ?", (left_user_id,))
         invite_info = cursor.fetchone()
         
         if invite_info:
             inviter_user_id, invite_link_url = invite_info
-            # Deactivate the key associated with this invite link
             cursor.execute("UPDATE keys SET is_active = 0 WHERE user_id = ? AND invite_link_url = ?", (inviter_user_id, invite_link_url))
             conn.commit()
             
@@ -292,7 +284,9 @@ def verify_key_api():
     return jsonify({"status": "error", "message": "Invalid/Expired key."}), 403
 
 def run_flask_app():
-    app.run(host="0.0.0.0", port=WEB_SERVER_PORT)
+    # Render အတွက် Port နေရာကို အလိုအလျောက် သိစေရန် ပြင်ဆင်ထားသည်
+    port = int(os.environ.get("PORT", WEB_SERVER_PORT))
+    app.run(host="0.0.0.0", port=port)
 
 def main() -> None:
     init_db()
@@ -306,3 +300,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    
