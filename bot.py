@@ -93,8 +93,15 @@ def is_key_valid(key_id):
         user_id, expiration_time_str, is_active = result
         if not is_active:
             return False
+        
+        # Timezone အမှားကို တိကျအောင် ပြင်ဆင်ထားသော အပိုင်း
         expiration_time = datetime.fromisoformat(expiration_time_str)
-        if datetime.now(pytz.utc) < expiration_time:
+        if expiration_time.tzinfo is None:
+            expiration_time = pytz.utc.localize(expiration_time)
+            
+        current_time = datetime.now(pytz.utc)
+        
+        if current_time < expiration_time:
             return True
     return False
 
@@ -284,7 +291,6 @@ def verify_key_api():
     return jsonify({"status": "error", "message": "Invalid/Expired key."}), 403
 
 def run_flask_app():
-    # Render အတွက် Port နေရာကို အလိုအလျောက် သိစေရန် ပြင်ဆင်ထားသည်
     port = int(os.environ.get("PORT", WEB_SERVER_PORT))
     app.run(host="0.0.0.0", port=port)
 
