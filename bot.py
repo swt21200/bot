@@ -94,7 +94,6 @@ def is_key_valid(key_id):
         if not is_active:
             return False
         
-        # Timezone အမှားကို တိကျအောင် ပြင်ဆင်ထားသော အပိုင်း
         expiration_time = datetime.fromisoformat(expiration_time_str)
         if expiration_time.tzinfo is None:
             expiration_time = pytz.utc.localize(expiration_time)
@@ -106,10 +105,10 @@ def is_key_valid(key_id):
     return False
 
 def get_main_menu_keyboard():
+    # Daily Free Key ခလုတ်ကို ဖြုတ်ပြီး Layout ကို အဆင်ပြေအောင် ညှိထားပါတယ်
     keyboard = [
         [KeyboardButton("🚀 Bot စတင်ရန်"), KeyboardButton("🔗 Invite Link ရယူရန်")],
-        [KeyboardButton("🎁 Daily Free Key"), KeyboardButton("🔑 ကျွန်ုပ်၏ Key စစ်ရန်")],
-        [KeyboardButton("ℹ️ အကူအညီ")]
+        [KeyboardButton("🔑 ကျွန်ုပ်၏ Key စစ်ရန်"), KeyboardButton("ℹ️ အကူအညီ")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -120,9 +119,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     cursor.execute("SELECT personal_bot_link FROM users WHERE user_id = ?", (user.id,))
     user_data = cursor.fetchone()
     
+    # စာသားထဲမှ Free Key ယူနိုင်ကြောင်းကို ပယ်ဖျက်ထားပါတယ်
     welcome_text = (
         f"မင်္ဂလာပါ {user.mention_html()} 🙏\n\n"
-        "ကျွန်ုပ်တို့၏ Bot မှ ကြိုဆိုပါတယ်။ လူဖိတ်ပြီး (သို့) နေ့စဉ် အခမဲ့ 1-Hour Key ရယူနိုင်ပါတယ်။\n"
+        "ကျွန်ုပ်တို့၏ Bot မှ ကြိုဆိုပါတယ်။ လူဖိတ်ပြီး 1-Hour Key ရယူနိုင်ပါတယ်။\n"
         "အောက်က Menu ခလုတ်များကို အသုံးပြုနိုင်ပါတယ် 👇"
     )
 
@@ -134,29 +134,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         conn.commit()
     
     await update.message.reply_text(welcome_text, parse_mode='HTML', reply_markup=get_main_menu_keyboard())
-    conn.close()
-
-async def get_daily_free_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.effective_user
-    today = datetime.now(pytz.utc).strftime("%Y-%m-%d")
-    
-    conn = sqlite3.connect("bot_data.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT last_free_key_date FROM users WHERE user_id = ?", (user.id,))
-    result = cursor.fetchone()
-    
-    if result and result[0] == today:
-        await update.message.reply_text("❌ သင်သည် ယနေ့အတွက် Free Key ရယူပြီးပါပြီ။ မနက်ဖြန်မှ ပြန်လာခဲ့ပါ။")
-    else:
-        new_key = generate_and_store_key(user.id)
-        cursor.execute("UPDATE users SET last_free_key_date = ? WHERE user_id = ?", (today, user.id))
-        conn.commit()
-        await update.message.reply_text(
-            f"🎁 ယနေ့အတွက် သင်၏ Daily Free Key ရပါပြီ-\n\n"
-            f"<code>{new_key}</code>\n\n"
-            f"⚠️ ဒီ Key က ၁ နာရီပဲ သက်တမ်းရှိပြီး တစ်ကြိမ်ပဲ သုံးလို့ရပါမယ်။",
-            parse_mode='HTML'
-        )
     conn.close()
 
 async def get_invite_link_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -177,8 +154,8 @@ async def get_invite_link_action(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text(
             f"🔗 သင်၏ သီးသန့် Invite Link ရပါပြီ-\n\n"
             f"<code>{invite_link_url}</code>\n\n"
-            f"⚠️ ဒီ Link က ၁၀ မိနစ်ပဲ ခံပြီး ၁ ယောက်ပဲ Join လို့ရပါမယ်။\n"
-            f"လူ Join တာနဲ့ သင့်ဆီ Key ပို့ပေးပါ့မယ်။",
+            f"⚠️ ဒီ Link က ၁၀ မိနစ်ပဲ ခံပြီး ၁ ယောက်ပဲ Join လို့ရပါမယ်。\n"
+            f"လူ Join တတာနဲ့ သင့်ဆီ Key ပို့ပေးပါ့မယ်။",
             parse_mode='HTML'
         )
     except Exception as e:
@@ -248,14 +225,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await start(update, context)
     elif text == "🔗 Invite Link ရယူရန်":
         await get_invite_link_action(update, context)
-    elif text == "🎁 Daily Free Key":
-        await get_daily_free_key(update, context)
     elif text == "ℹ️ အကူအညီ":
+        # အကူအညီစာသားထဲက Daily Free Key အပိုင်းကို ဖြုတ်ထားပါတယ်
         help_text = (
             "📖 **အသုံးပြုနည်း**\n\n"
             "၁။ '🔗 Invite Link ရယူရန်' ကိုနှိပ်ပြီး လူဖိတ်ပါ။\n"
-            "၂။ '🎁 Daily Free Key' ကိုနှိပ်ပြီး တစ်ရက်တစ်ခါ အခမဲ့ Key ယူပါ။\n"
-            "၃။ ရလာတဲ့ Key ကို Termux ထဲမှာ ထည့်သုံးပါ။\n\n"
+            "၂။ လူ Join တာနဲ့ ရလာတဲ့ Key ကို Termux ထဲမှာ ထည့်သုံးပါ။\n\n"
             "⚠️ **သတိပြုရန်:** သင်ဖိတ်ခေါ်သူသည် Group မှ ထွက်သွားပါက သင့်အားထုတ်ပေးထားသော Key မှာ အလိုအလျောက် ပယ်ဖျက်ခံရပါမည်။"
         )
         await update.message.reply_text(help_text, parse_mode='Markdown')
@@ -306,4 +281,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-    
+
