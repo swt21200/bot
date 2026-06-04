@@ -4,8 +4,9 @@ import sqlite3
 import time
 from datetime import datetime, timedelta
 import pytz
+import uuid
 
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, ChatMemberHandler, filters, ContextTypes
 from flask import Flask, request, jsonify
 from threading import Thread
@@ -22,71 +23,262 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# --- Starlink logic ကို တိုက်ရိုက် Run မည့်အပိုင်း ---
-def run_starlink_in_bot():
+# Database setup
+def init_db():
+    conn = sqlite3.connect("bot_data.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            personal_bot_link TEXT UNIQUE,
+            last_free_key_date TEXT
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS group_invite_links (
+            invite_link_id TEXT PRIMARY KEY,
+            inviter_user_id INTEGER,
+            invite_link_url TEXT UNIQUE,
+            created_at TEXT,
+            expires_at TEXT,
+            is_used INTEGER DEFAULT 0,
+            joined_user_id INTEGER,
+            FOREIGN KEY (inviter_user_id) REFERENCES users(user_id)
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS keys (
+            key_id TEXT PRIMARY KEY,
+            user_id INTEGER,
+            expiration_time TEXT,
+            is_active INTEGER DEFAULT 1,
+            invite_link_url TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
+        )
+    """)
+    
     try:
-        import starlink
-        if hasattr(starlink, 'main'):
-            starlink.main()
-        elif hasattr(starlink, 'start'):
-            starlink.start()
-        return True, "Starlink Module ကို အောင်မြင်စွာ စတင်လိုက်ပါပြီ။"
-    except ImportError:
-        return False, "'starlink' module ဖိုင်ကို ဆာဗာပေါ်မှာ ရှာမတွေ့ပါ။"
+        cursor.execute("ALTER TABLE group_invite_links ADD COLUMN joined_user_id INTEGER")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute("ALTER TABLE keys ADD COLUMN invite_link_url TEXT")
+    except sqlite3.OperationalError:
+        pass
+        
+    conn.commit()
+    conn.close()
+
+def generate_and_store_key(user_id, invite_link_url=None):
+    conn = sqlite3.connect("bot_data.db")
+    cursor = conn.cursor()
+    cursor.execute("UPDATE keys SET is_active = 0 WHERE user_id = ?", (user_id,))
+    
+    new_key = str(uuid.uuid4())
+    expiration_time = datetime.now(pytz.utc) + timedelta(hours=1)
+    cursor.execute("INSERT INTO keys (key_id, user_id, expiration_time, invite_link_url) VALUES (?, ?, ?, ?)",
+                   (new_key, user_id, expiration_time.isoformat(), invite_link_url))
+    conn.commit()
+    conn.close()
+    return new_key
+
+def is_key_valid(key_id):
+    conn = sqlite3.connect("bot_data.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id, expiration_time, is_active FROM keys WHERE key_id = ?", (key_id,))
+    result = cursor.fetchone()
+    conn.close()
+    if result:
+        user_id, expiration_time_str, is_active = result
+        if not is_active:
+            return False
+        
+        expiration_time = datetime.fromisoformat(expiration_time_str)
+        if expiration_time.tzinfo is None:
+            expiration_time = pytz.utc.localize(expiration_time)
+            
+        current_time = datetime.now(pytz.utc)
+        
+        if current_time < expiration_time:
+            return True
+    return False
 
 def get_main_menu_keyboard():
-    # Key စစ်တဲ့ ခလုတ်တွေကို ဖြုတ်ပြီး ရှင်းရှင်းလင်းလင်းပဲ ထားလိုက်ပါပြီ
+    # Daily Free Key ခလုတ်ကို ဖြုတ်ပြီး Layout ကို အဆင်ပြေအောင် ညှိထားပါတယ်
     keyboard = [
-        [KeyboardButton("🚀 Starlink စတင်ရန်")],
-        [KeyboardButton("ℹ️ အကူအညီ")]
+        [KeyboardButton("🚀 Bot စတင်ရန်"), KeyboardButton("🔗 Invite Link ရယူရန်")],
+        [KeyboardButton("🔑 ကျွန်ုပ်၏ Key စစ်ရန်"), KeyboardButton("ℹ️ အကူအညီ")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
+    conn = sqlite3.connect("bot_data.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT personal_bot_link FROM users WHERE user_id = ?", (user.id,))
+    user_data = cursor.fetchone()
+    
+    # စာသားထဲမှ Free Key ယူနိုင်ကြောင်းကို ပယ်ဖျက်ထားပါတယ်
     welcome_text = (
         f"မင်္ဂလာပါ {user.mention_html()} 🙏\n\n"
-        "ကျွန်ုပ်တို့၏ အခမဲ့ Bot မှ ကြိုဆိုပါတယ်။\n"
-        "အောက်က '🚀 Starlink စတင်ရန်' ခလုတ်ကို နှိပ်ပြီး တိုက်ရိုက် အသုံးပြုနိုင်ပါတယ်။"
+        "ကျွန်ုပ်တို့၏ Bot မှ ကြိုဆိုပါတယ်။ လူဖိတ်ပြီး 1-Hour Key ရယူနိုင်ပါတယ်။\n"
+        "အောက်က Menu ခလုတ်များကို အသုံးပြုနိုင်ပါတယ် 👇"
     )
+
+    if not user_data:
+        bot_username = (await context.bot.get_me()).username
+        personal_bot_link = f"https://t.me/{bot_username}?start=invite_{user.id}"
+        cursor.execute("INSERT INTO users (user_id, username, personal_bot_link) VALUES (?, ?, ?)",
+                       (user.id, user.username, personal_bot_link))
+        conn.commit()
+    
     await update.message.reply_text(welcome_text, parse_mode='HTML', reply_markup=get_main_menu_keyboard())
+    conn.close()
+
+async def get_invite_link_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    conn = sqlite3.connect("bot_data.db")
+    cursor = conn.cursor()
+    try:
+        invite_link_object = await context.bot.create_chat_invite_link(
+            chat_id=GROUP_ID,
+            member_limit=1,
+            expire_date=datetime.now(pytz.utc) + timedelta(minutes=10),
+            name=f"Invite by {user.username or user.first_name} ({user.id})"
+        )
+        invite_link_url = invite_link_object.invite_link
+        cursor.execute("INSERT INTO group_invite_links (invite_link_id, inviter_user_id, invite_link_url, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+                       (invite_link_url, user.id, invite_link_url, datetime.now(pytz.utc).isoformat(), (datetime.now(pytz.utc) + timedelta(minutes=10)).isoformat()))
+        conn.commit()
+        await update.message.reply_text(
+            f"🔗 သင်၏ သီးသန့် Invite Link ရပါပြီ-\n\n"
+            f"<code>{invite_link_url}</code>\n\n"
+            f"⚠️ ဒီ Link က ၁၀ မိနစ်ပဲ ခံပြီး ၁ ယောက်ပဲ Join လို့ရပါမယ်。\n"
+            f"လူ Join တတာနဲ့ သင့်ဆီ Key ပို့ပေးပါ့မယ်။",
+            parse_mode='HTML'
+        )
+    except Exception as e:
+        logger.error(f"Error creating invite link: {e}")
+        await update.message.reply_text("❌ Link ထုတ်လို့မရပါ။ Bot ကို Group Admin ပေးထားလား စစ်ဆေးပေးပါ။")
+    finally:
+        conn.close()
+
+async def chat_member_updated_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    result = update.chat_member
+    if not result or result.chat.id != GROUP_ID:
+        return
+        
+    old_status = result.old_chat_member.status
+    new_status = result.new_chat_member.status
+    
+    if old_status in ["left", "kicked", "both_left"] and new_status in ["member", "administrator", "creator"]:
+        invite_link = result.invite_link
+        if invite_link:
+            conn = sqlite3.connect("bot_data.db")
+            cursor = conn.cursor()
+            cursor.execute("SELECT inviter_user_id, is_used FROM group_invite_links WHERE invite_link_url = ?", (invite_link.invite_link,))
+            invite_data = cursor.fetchone()
+            
+            if invite_data and not invite_data[1]:
+                inviter_user_id = invite_data[0]
+                cursor.execute("UPDATE group_invite_links SET is_used = 1, joined_user_id = ? WHERE invite_link_url = ?", 
+                               (result.new_chat_member.user.id, invite_link.invite_link))
+                conn.commit()
+                
+                new_key = generate_and_store_key(inviter_user_id, invite_link.invite_link)
+                try:
+                    await context.bot.send_message(
+                        chat_id=inviter_user_id, 
+                        text=(f"🎉 လူသစ် Join လာပါပြီ။ သင့်အတွက် 1-Hour Key ရပါပြီ-\n\n<code>{new_key}</code>\n\nနှိပ်လိုက်ရင် Copy ကူးသွားပါလိမ့်မယ်။"), 
+                        parse_mode='HTML'
+                    )
+                except Exception as e:
+                    logger.error(f"Error sending key: {e}")
+            conn.close()
+
+    elif new_status in ["left", "kicked"]:
+        left_user_id = result.new_chat_member.user.id
+        conn = sqlite3.connect("bot_data.db")
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT inviter_user_id, invite_link_url FROM group_invite_links WHERE joined_user_id = ?", (left_user_id,))
+        invite_info = cursor.fetchone()
+        
+        if invite_info:
+            inviter_user_id, invite_link_url = invite_info
+            cursor.execute("UPDATE keys SET is_active = 0 WHERE user_id = ? AND invite_link_url = ?", (inviter_user_id, invite_link_url))
+            conn.commit()
+            
+            try:
+                await context.bot.send_message(
+                    chat_id=inviter_user_id,
+                    text="⚠️ သင်ဖိတ်ခေါ်ထားသူသည် Group မှ ထွက်သွားသောကြောင့် ထုတ်ပေးထားသော Key ကို ပယ်ဖျက်လိုက်ပါပြီ။"
+                )
+            except Exception:
+                pass
+        conn.close()
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    text = update.message.text.strip()
-    
-    if text == "🚀 Starlink စတင်ရန်":
-        await update.message.reply_text("⏳ Starlink Module ကို စတင်နေပါပြီ၊ ခေတ္တစောင့်ဆိုင်းပေးပါ...")
-        
-        # Key စစ်ဆေးခြင်းမရှိဘဲ တိုက်ရိုက် Run စေခြင်း
-        success, msg = run_starlink_in_bot()
-        if success:
-            await update.message.reply_text(f"✅ {msg}")
-        else:
-            await update.message.reply_text(f"❌ {msg}")
-            
+    text = update.message.text
+    if text == "🚀 Bot စတင်ရန်":
+        await start(update, context)
+    elif text == "🔗 Invite Link ရယူရန်":
+        await get_invite_link_action(update, context)
     elif text == "ℹ️ အကူအညီ":
+        # အကူအညီစာသားထဲက Daily Free Key အပိုင်းကို ဖြုတ်ထားပါတယ်
         help_text = (
             "📖 **အသုံးပြုနည်း**\n\n"
-            "• '🚀 Starlink စတင်ရန်' ခလုတ်ကို နှိပ်လိုက်ရုံဖြင့် Bot က လုပ်ငန်းစဉ်ကို တိုက်ရိုက် အလုပ်လုပ်ပေးသွားမှာ ဖြစ်ပါတယ်။\n"
-            "• မည်သည့် Key မျှ ထည့်သွင်းပေးရန် မလိုဘဲ အခမဲ့ စမ်းသပ်နိုင်ပါတယ်။"
+            "၁။ '🔗 Invite Link ရယူရန်' ကိုနှိပ်ပြီး လူဖိတ်ပါ။\n"
+            "၂။ လူ Join တာနဲ့ ရလာတဲ့ Key ကို Termux ထဲမှာ ထည့်သုံးပါ။\n\n"
+            "⚠️ **သတိပြုရန်:** သင်ဖိတ်ခေါ်သူသည် Group မှ ထွက်သွားပါက သင့်အားထုတ်ပေးထားသော Key မှာ အလိုအလျောက် ပယ်ဖျက်ခံရပါမည်။"
         )
         await update.message.reply_text(help_text, parse_mode='Markdown')
+    elif text == "🔑 ကျွန်ုပ်၏ Key စစ်ရန်":
+        await update.message.reply_text("စစ်ဆေးလိုသော Key ကို /check_key <key> ပုံစံဖြင့် ရိုက်ပို့ပေးပါ။")
+
+async def check_key_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if len(context.args) == 1:
+        key_id = context.args[0]
+        if is_key_valid(key_id):
+            await update.message.reply_text(f"✅ Key <code>{key_id}</code> သည် အသုံးပြုနိုင်ပါသည်။", parse_mode='HTML')
+        else:
+            await update.message.reply_text(f"❌ Key <code>{key_id}</code> သည် မှားယွင်းနေသည် (သို့) သက်တမ်းကုန်နေပါသည်။", parse_mode='HTML')
+    else:
+        await update.message.reply_text("အသုံးပြုပုံ- /check_key <သင့်ရဲ့_key>")
 
 app = Flask(__name__)
 @app.route("/", methods=["GET"])
 def health_check():
-    return "Bot is alive and free!", 200
+    return "Bot is alive!", 200
+
+@app.route("/verify_key", methods=["POST"])
+def verify_key_api():
+    data = request.get_json()
+    key_id = data.get("key")
+    if is_key_valid(key_id):
+        conn = sqlite3.connect("bot_data.db")
+        cursor = conn.cursor()
+        cursor.execute("UPDATE keys SET is_active = 0 WHERE key_id = ?", (key_id,))
+        conn.commit()
+        conn.close()
+        return jsonify({"status": "success", "message": "Key used."}), 200
+    return jsonify({"status": "error", "message": "Invalid/Expired key."}), 403
 
 def run_flask_app():
     port = int(os.environ.get("PORT", WEB_SERVER_PORT))
     app.run(host="0.0.0.0", port=port)
 
 def main() -> None:
+    init_db()
     Thread(target=run_flask_app, daemon=True).start()
     application = Application.builder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("check_key", check_key_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.run_polling(allowed_updates=[Update.MESSAGE])
+    application.add_handler(ChatMemberHandler(chat_member_updated_handler, ChatMemberHandler.CHAT_MEMBER))
+    application.run_polling(allowed_updates=[Update.CHAT_MEMBER, Update.MESSAGE, Update.MY_CHAT_MEMBER])
 
 if __name__ == "__main__":
     main()
+
