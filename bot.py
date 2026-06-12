@@ -5,8 +5,8 @@ from datetime import datetime
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 
 # ==================== CONFIGURATION ====================
-BOT_TOKEN = "8531885088:AAHvHjHqP2U_46FsYI1tRCX29ieXqKxL9PM"
-ADMIN_PASSWORD = "1662004win"
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8531885088:AAHvHjHqP2U_46FsYI1tRCX29ieXqKxL9PM") 
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "1662004win")
 DB_FILE = "user_secure_db.json"
 # =======================================================
 
@@ -17,12 +17,15 @@ def load_db():
         with open(DB_FILE, "r", encoding="utf-8") as f:
             try: 
                 data = json.load(f)
-                if "approved_users" not in data or type(data["approved_users"]) is list:
+                # ဒေတာဘေ့စ်တစ်ခုလုံး ပျက်မသွားအောင် စနစ်တကျ စစ်ဆေးခြင်း
+                if "approved_users" not in data or not isinstance(data["approved_users"], dict):
                     data["approved_users"] = {}
-                if "user_states" not in data:
+                if "user_states" not in data or not isinstance(data["user_states"], dict):
                     data["user_states"] = {}
-                if "keys_db" not in data:
+                if "keys_db" not in data or not isinstance(data["keys_db"], dict):
                     data["keys_db"] = {}
+                if "admins" not in data or not isinstance(data["admins"], list):
+                    data["admins"] = []
                 return data
             except json.JSONDecodeError: 
                 return get_default_db()
@@ -32,7 +35,8 @@ def get_default_db():
     return {
         "approved_users": {},  
         "user_states": {},  
-        "keys_db": {} 
+        "keys_db": {},
+        "admins": []
     }
 
 def save_db(data):
@@ -61,8 +65,7 @@ def get_admin_menu():
     markup.add(btn_approve, btn_block, btn_add_key, btn_view_keys, btn_del_key, btn_list, btn_exit)
     return markup
 
-def send_force_start(target_id, user_name, from_user_first_name):
-    # အသုံးပြုခွင့် ပိတ်ခံရသော User အား Start စာမျက်နှာသို့ အတင်းပြန်ပို့ခြင်း
+def send_force_start(target_id, from_user_first_name):
     pending_text = (
         "🔒 **စနစ်ကို အသုံးပြုရန် ခွင့်ပြုချက် လိုအပ်ပါသည်**\n\n"
         f"👤 သင့်အမည်: `{from_user_first_name}`\n"
@@ -104,11 +107,14 @@ def handle_all_messages(message):
     db_data = load_db()
     
     state = db_data["user_states"].get(chat_id)
+    admins_list = db_data.get("admins", [])
 
-    # ==================== ADMIN ROLE HANDLING ====================
+    # ==================== ADMIN PASSWORD CHECKING ====================
     if state == "AWAITING_ADMIN_PASSWORD":
         if user_text == ADMIN_PASSWORD:
             db_data["user_states"][chat_id] = "ADMIN_MAIN"
+            if chat_id not in admins_list:
+                db_data["admins"].append(chat_id)
             save_db(db_data)
             bot.send_message(chat_id, "🔓 Admin Access Granted! မင်္ဂလာပါ အိုင်တီမန်နေဂျာ။", reply_markup=get_admin_menu())
         else:
@@ -117,21 +123,8 @@ def handle_all_messages(message):
             bot.send_message(chat_id, "❌ Admin စကားဝှက် မှားယွင်းပါသည်။", reply_markup=ReplyKeyboardRemove())
         return
 
-    admin_buttons = [
-        "✅ User အား ခွင့်ပြုချက်ပေးမည် (Approve)", 
-        "❌ User အား အသုံးပြုခွင့်ပိတ်မည် (Block)", 
-        "🔑 Key နှင့် Link အသစ်ထည့်မည်", 
-        "📋 သတ်မှတ်ထားသော Key များစာရင်း",
-        "🗑️ Key နှင့် Link ပြန်ဖျက်မည်",
-        "👤 ခွင့်ပြုထားသော User များစာရင်း", 
-        "🚪 Admin Panel မှ ထွက်မည်"
-    ]
-    
-    if state == "ADMIN_MAIN" or user_text in admin_buttons or (state and state.startswith("AWAITING_")):
-        if not state or (state != "ADMIN_MAIN" and not state.startswith("AWAITING_")):
-            bot.send_message(chat_id, "⚠️ သက်တမ်းကုန်ဆုံးသွားပါပြီ။ `/admin` ကိုနှိပ်၍ ပြန်လည်ဝင်ရောက်ပါ။", reply_markup=ReplyKeyboardRemove())
-            return
-
+    # ==================== STRICT ADMIN ROLE VERIFICATION ====================
+    if chat_id in admins_list:
         if user_text == "✅ User အား ခွင့်ပြုချက်ပေးမည် (Approve)":
             db_data["user_states"][chat_id] = "AWAITING_APPROVE_ID"
             save_db(db_data)
@@ -180,6 +173,8 @@ def handle_all_messages(message):
 
         elif user_text == "🚪 Admin Panel မှ ထွက်မည်":
             db_data["user_states"][chat_id] = None
+            if chat_id in db_data["admins"]:
+                db_data["admins"].remove(chat_id)
             save_db(db_data)
             if chat_id in db_data.get("approved_users", {}):
                 bot.send_message(chat_id, "🚪 Admin Panel မှ ထွက်ပြီးပါပြီ။", reply_markup=get_user_menu())
@@ -187,16 +182,16 @@ def handle_all_messages(message):
                 bot.send_message(chat_id, "🚪 Admin Panel မှ ထွက်ပြီးပါပြီ။", reply_markup=ReplyKeyboardRemove())
             return
 
-        # ---- Admin Action Steps Processing ----
+        # ---- Admin Action Processing ----
         if state == "AWAITING_KEY_DELETE":
             keys_dict = db_data.get("keys_db", {})
             if user_text in keys_dict:
-                del db_data["keys_db"][user_text]
+                del db_data["keys_db"][user_text]  # အိုင်တမ်တစ်ခုချင်းစီကိုပဲ ဖျက်တာဖြစ်လို့ ကျန်တာမပျက်ပါ
                 db_data["user_states"][chat_id] = "ADMIN_MAIN"
                 save_db(db_data)
                 bot.send_message(chat_id, f"✅ Key: `{user_text}` နှင့် Link အား အပြီးဖျက်လိုက်ပါပြီ။", reply_markup=get_admin_menu(), parse_mode="Markdown")
             else:
-                bot.send_message(chat_id, f"❌ Key: `{user_text}` အား စနစ်ထဲတွင် ရှာမတွေ့ပါ။")
+                bot.send_message(chat_id, f"❌ Key: `{user_text}` အား စနစ်ထဲတွင် ရှာမတွေ့ပါ။", reply_markup=get_admin_menu())
             return
 
         if state == "AWAITING_KEY_NAME":
@@ -205,13 +200,17 @@ def handle_all_messages(message):
             bot.send_message(chat_id, f"🔗 Key: `{user_text}` အတွက် ချိတ်ဆက်ပေးမည့် **Wi-Fi Portal Link** ကို ထည့်ပေးပါ...", parse_mode="Markdown")
             return
 
+        # *** ဒီနေရာက Logic အမှားကို ပြင်ဆင်လိုက်တာဖြစ်ပါတယ် ***
         if state and state.startswith("AWAITING_KEY_LINK:"):
-            target_key = state.split(":")[1]
+            target_key = state.split(":", 1)[1] # Key ထဲမှာ ပါနိုင်တဲ့ ချက်တွေကို လုံခြုံအောင် Split လုပ်ခြင်း
             wifi_url = user_text
-            db_data["keys_db"][target_key] = wifi_url
+            
+            # ဒေတာဟောင်းတွေမပျက်အောင် Dictionary ထဲသို့ အသစ်လှမ်းပေါင်းထည့်ခြင်း
+            db_data["keys_db"][target_key] = wifi_url 
+            
             db_data["user_states"][chat_id] = "ADMIN_MAIN"
             save_db(db_data)
-            bot.send_message(chat_id, f"✅ Key: `{target_key}` အတွက် Wi-Fi Link ကို သိမ်းဆည်းပြီးပါပြီ။", reply_markup=get_admin_menu(), parse_mode="Markdown")
+            bot.send_message(chat_id, f"✅ Key: `{target_key}` အတွက် Wi-Fi Link ကို အောင်မြင်စွာ ထပ်မံတိုးချဲ့သိမ်းဆည်းပြီးပါပြီ။", reply_markup=get_admin_menu(), parse_mode="Markdown")
             return
 
         if state == "AWAITING_APPROVE_ID":
@@ -220,11 +219,11 @@ def handle_all_messages(message):
                 save_db(db_data)
                 bot.send_message(chat_id, f"👤 User ID: `{user_text}` အတွက် **'နာမည် (Name)'** ကို ရိုက်ထည့်ပေးပါ...", parse_mode="Markdown")
             else:
-                bot.send_message(chat_id, "❌ ID သည် ဂဏန်းများသာ ဖြစ်ရပါမည်။")
+                bot.send_message(chat_id, "❌ ID သည် ဂဏန်းများသာ ဖြစ်ရပါမည်။", reply_markup=get_admin_menu())
             return
 
         if state and state.startswith("AWAITING_APPROVE_NAME:"):
-            target_id = state.split(":")[1]
+            target_id = state.split(":", 1)[1]
             user_name = user_text
             current_time = datetime.now().strftime("%d-%b-%Y %I:%M:%S %p")
             db_data["approved_users"][target_id] = {"name": user_name, "date": current_time, "last_tab_msg_id": None}
@@ -235,7 +234,6 @@ def handle_all_messages(message):
             except Exception: pass
             return
 
-        # User ကို ပိတ်ခြင်း (Block) နှင့် စာများ Tab များလိုက်ဖျက်ခြင်း
         if state == "AWAITING_BLOCK":
             if user_text.isdigit():
                 target_id = user_text
@@ -244,27 +242,23 @@ def handle_all_messages(message):
                     user_name = user_info.get("name", "User")
                     last_msg_id = user_info.get("last_tab_msg_id")
                     
-                    # ၁။ ပေးထားဖူးတဲ့ Tab လင့်ခ်စာသား (Message) ကို အလိုအလျောက်လိုက်ဖျက်ပေးခြင်း
                     if last_msg_id:
                         try: bot.delete_message(int(target_id), int(last_msg_id))
                         except Exception: pass
                     
-                    # ၂။ ၎င်း၏ လက်ရှိလုပ်ဆောင်မှု State ကိုဖျက်ခြင်း
                     if target_id in db_data["user_states"]:
                         db_data["user_states"][target_id] = None
                         
-                    # ၃။ ၎င်းအား Approved List မှ အပြီးတိုင်ဖျက်ခြင်း
                     del db_data["approved_users"][target_id]
                     db_data["user_states"][chat_id] = "ADMIN_MAIN"
                     save_db(db_data)
                     
                     bot.send_message(chat_id, f"🚷 User ID: `{target_id}` အသုံးပြုခွင့်ကို ပိတ်ပြီး Tab စာသားများကို ဖျက်ဆီးလိုက်ပါပြီ။", reply_markup=get_admin_menu(), parse_mode="Markdown")
                     
-                    # ၄။ User ဘက်ခြမ်းကို ခလုတ်များဖျောက်ပြီး Start စာမျက်နှာသို့ အတင်းပို့ခြင်း
-                    try: send_force_start(target_id, user_name, "User")
+                    try: send_force_start(target_id, user_name)
                     except Exception: pass
                 else:
-                    bot.send_message(chat_id, "❌ အဆိုပါ ID မှာ Approved List ထဲတွင် မရှိပါ။")
+                    bot.send_message(chat_id, "❌ အဆိုပါ ID မှာ Approved List ထဲတွင် မရှိပါ။", reply_markup=get_admin_menu())
             return
 
     # ==================== APPROVED USER ROLE HANDLING ====================
@@ -290,7 +284,6 @@ def handle_all_messages(message):
             if user_text in keys_dict:
                 wifi_link = keys_dict[user_text]
                 
-                # အဟောင်း ပို့ထားဖူးသော Tab Message ရှိလျှင် အရင်ဖျက်ပေးခြင်း
                 old_msg_id = db_data["approved_users"][chat_id].get("last_tab_msg_id")
                 if old_msg_id:
                     try: bot.delete_message(int(chat_id), int(old_msg_id))
@@ -299,10 +292,9 @@ def handle_all_messages(message):
                 db_data["user_states"][chat_id] = None
                 
                 success_text = (
-                    "✅ **စကားဝှက် မှန်ကန်ပါသည်။**\n\n"
+                    "✅ **စကားဝှက် မှန်ကန်ပါသဖြင့် လင့်ခ် ထွက်လာပါပြီ။**\n\n"
                     f"[👉 Wi-Fi စတင်ရန် ဤနေရာကိုနှိပ်ပါ 👈]({wifi_link})"
                 )
-                # Tab စာသားကို ပို့ပြီး Message ID ကို ဒေတာဘေ့စ်ထဲတွင် မှတ်သားခြင်း
                 sent_msg = bot.send_message(chat_id, success_text, reply_markup=get_user_menu(), parse_mode="Markdown")
                 db_data["approved_users"][chat_id]["last_tab_msg_id"] = sent_msg.message_id
                 save_db(db_data)
@@ -310,16 +302,15 @@ def handle_all_messages(message):
                 bot.send_message(chat_id, "❌ စကားဝှက် (Key) မမှန်ကန်ပါ။ ကျေးဇူးပြု၍ ပြန်လည်ရိုက်ထည့်ပါ...")
             return
     else:
-        # ခွင့်ပြုချက်မရှိသော User များအတွက် Start အတိုင်း ပြန်ပြခြင်း
-        pending_text = (
-            "🔒 **စနစ်ကို အသုံးပြုရန် ခွင့်ပြုချက် လိုအပ်ပါသည်**\n\n"
-            f"👤 သင့်အမည်: `{message.from_user.first_name}`\n"
-            f"🆔 သင့်ရဲ့ ID: `{chat_id}`\n\n"
-            "⚠️ အထက်ပါ **ID** နှင့် **သင့်အမည်** ကို ကူးယူ (Copy) ပြီး Admin ထံသို့ ပို့ပေးကာ အသုံးပြုခွင့် တောင်းခံလိုက်ပါဗျာ။"
-        )
-        bot.send_message(chat_id, pending_text, reply_markup=ReplyKeyboardRemove(), parse_mode="Markdown")
+        if state != "AWAITING_ADMIN_PASSWORD":
+            pending_text = (
+                "🔒 **စနစ်ကို အသုံးပြုရန် ခွင့်ပြုချက် လိုအပ်ပါသည်**\n\n"
+                f"👤 သင့်အမည်: `{message.from_user.first_name}`\n"
+                f"🆔 သင့်ရဲ့ ID: `{chat_id}`\n\n"
+                "⚠️ အထက်ပါ **ID** နှင့် **သင့်အမည်** ကို ကူးယူ (Copy) ပြီး Admin ထံသို့ ပို့ပေးကာ အသုံးပြုခွင့် တောင်းခံလိုက်ပါဗျာ။"
+            )
+            bot.send_message(chat_id, pending_text, reply_markup=ReplyKeyboardRemove(), parse_mode="Markdown")
 
 if __name__ == "__main__":
-    print("[+] Double Secure Control Bot (Force Clean & Anti-Leak System) စတင်လည်ပတ်နေပါပြီ...")
+    print("[+] Double Secure Control Bot (Multi-Key Storage Fixed) စတင်လည်ပတ်နေပါပြီ...")
     bot.infinity_polling()
-    
