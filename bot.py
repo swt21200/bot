@@ -5,12 +5,12 @@ from datetime import datetime
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from flask import Flask, request
 
-# ==================== CONFIGURATION ====================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8531885088:AAHvHjHqP2U_46FsYI1tRCX29ieXqKxL9PM") 
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "1662004win")
+# ==================== CONFIGURATION (DIRECT) ====================
+BOT_TOKEN = "8531885088:AAHvHjHqP2U_46FsYI1tRCX29ieXqKxL9PM" 
+ADMIN_PASSWORD = "1662004win"
+RENDER_EXTERNAL_URL = "https://bot-5-z1jn.onrender.com/" # အဆုံးမှာ / ပါပြီးသားဖြစ်ရမည်
 DB_FILE = "user_secure_db.json"
-RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL") # Render မှ ပေးမည့် Web URL
-# =======================================================
+# ================================================================
 
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
@@ -40,7 +40,8 @@ def save_db(data):
     try:
         with open(DB_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=4)
-    except Exception as e: print(f"[-] DB Save Error: {e}")
+    except Exception as e: 
+        print(f"[-] DB Save Error: {e}")
 
 def get_user_menu():
     markup = ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
@@ -101,7 +102,8 @@ def handle_all_messages(message):
     if state == "AWAITING_ADMIN_PASSWORD":
         if user_text == ADMIN_PASSWORD:
             db_data["user_states"][chat_id] = "ADMIN_MAIN"
-            if chat_id not in admins_list: db_data["admins"].append(chat_id)
+            if chat_id not in admins_list: 
+                db_data["admins"].append(chat_id)
             save_db(db_data)
             bot.send_message(chat_id, "🔓 Admin Access Granted!", reply_markup=get_admin_menu())
         else:
@@ -129,9 +131,11 @@ def handle_all_messages(message):
         elif user_text == "📋 သတ်မှတ်ထားသော Key များစာရင်း":
             keys_dict = db_data.get("keys_db", {})
             list_text = "📋 **လက်ရှိစနစ်ထဲရှိ Key နှင့် Links များစာရင်း** -\n\n"
-            if not keys_dict: list_text += "• သတ်မှတ်ထားသော Key မရှိသေးပါ။"
+            if not keys_dict: 
+                list_text += "• သတ်မှတ်ထားသော Key မရှိသေးပါ။"
             else:
-                for k, l in keys_dict.items(): list_text += f"🔑 **Key:** `{k}`\n🔗 **Link:** {l}\n\n"
+                for k, l in keys_dict.items(): 
+                    list_text += f"🔑 **Key:** `{k}`\n🔗 **Link:** {l}\n\n"
             bot.send_message(chat_id, list_text, reply_markup=get_admin_menu(), parse_mode="Markdown", disable_web_page_preview=True)
             return
         elif user_text == "🗑️ Key နှင့် Link ပြန်ဖျက်မည်":
@@ -142,14 +146,17 @@ def handle_all_messages(message):
         elif user_text == "👤 ခွင့်ပြုထားသော User များစာရင်း":
             approved_dict = db_data.get("approved_users", {})
             list_text = "👤 **ခွင့်ပြုချက်ရထားသော User များစာရင်း** -\n\n"
-            if not approved_dict: list_text += "• ခွင့်ပြုထားသော User မရှိသေးပါ။"
+            if not approved_dict: 
+                list_text += "• ခွင့်ပြုထားသော User မရှိသေးပါ။"
             else:
-                for uid, info in approved_dict.items(): list_text += f"• **ID:** `{uid}`\n  **Name:** {info['name']}\n\n"
+                for uid, info in approved_dict.items(): 
+                    list_text += f"• **ID:** `{uid}`\n  **Name:** {info['name']}\n\n"
             bot.send_message(chat_id, list_text, reply_markup=get_admin_menu(), parse_mode="Markdown")
             return
         elif user_text == "🚪 Admin Panel မှ ထွက်မည်":
             db_data["user_states"][chat_id] = None
-            if chat_id in db_data["admins"]: db_data["admins"].remove(chat_id)
+            if chat_id in db_data["admins"]: 
+                db_data["admins"].remove(chat_id)
             save_db(db_data)
             bot.send_message(chat_id, "🚪 Admin Panel မှ ထွက်ပြီးပါပြီ။", reply_markup=get_user_menu() if chat_id in db_data.get("approved_users", {}) else ReplyKeyboardRemove())
             return
@@ -160,7 +167,8 @@ def handle_all_messages(message):
                 db_data["user_states"][chat_id] = "ADMIN_MAIN"
                 save_db(db_data)
                 bot.send_message(chat_id, f"✅ Key: `{user_text}` ကို ဖျက်လိုက်ပါပြီ။", reply_markup=get_admin_menu(), parse_mode="Markdown")
-            else: bot.send_message(chat_id, f"❌ Key: `{user_text}` ရှာမတွေ့ပါ။", reply_markup=get_admin_menu())
+            else: 
+                bot.send_message(chat_id, f"❌ Key: `{user_text}` ရှာမတွေ့ပါ။", reply_markup=get_admin_menu())
             return
         if state == "AWAITING_KEY_NAME":
             db_data["user_states"][chat_id] = f"AWAITING_KEY_LINK:{user_text}"
@@ -179,7 +187,8 @@ def handle_all_messages(message):
                 db_data["user_states"][chat_id] = f"AWAITING_APPROVE_NAME:{user_text}"
                 save_db(db_data)
                 bot.send_message(chat_id, f"👤 User ID: `{user_text}` အတွက် နာမည်ရိုက်ထည့်ပေးပါ...", parse_mode="Markdown")
-            else: bot.send_message(chat_id, "❌ ID သည် ဂဏန်းသာဖြစ်ရမည်။", reply_markup=get_admin_menu())
+            else: 
+                bot.send_message(chat_id, "❌ ID သည် ဂဏန်းသာဖြစ်ရမည်။", reply_markup=get_admin_menu())
             return
         if state and state.startswith("AWAITING_APPROVE_NAME:"):
             target_id = state.split(":", 1)[1]
@@ -187,22 +196,29 @@ def handle_all_messages(message):
             db_data["user_states"][chat_id] = "ADMIN_MAIN"
             save_db(db_data)
             bot.send_message(chat_id, f"✅ User ID: `{target_id}` ခွင့်ပြုလိုက်ပါပြီ။", reply_markup=get_admin_menu(), parse_mode="Markdown")
-            try: bot.send_message(int(target_id), f"🎉 ခွင့်ပြုချက် ရရှိပါပြီ။", reply_markup=get_user_menu())
-            except Exception: pass
+            try: 
+                bot.send_message(int(target_id), f"🎉 ခွင့်ပြုချက် ရရှိပါပြီ။", reply_markup=get_user_menu())
+            except Exception: 
+                pass
             return
         if state == "AWAITING_BLOCK":
             if user_text in db_data["approved_users"]:
                 last_msg_id = db_data["approved_users"][user_text].get("last_tab_msg_id")
                 if last_msg_id:
-                    try: bot.delete_message(int(user_text), int(last_msg_id))
-                    except Exception: pass
+                    try: 
+                        bot.delete_message(int(user_text), int(last_msg_id))
+                    except Exception: 
+                        pass
                 del db_data["approved_users"][user_text]
                 db_data["user_states"][chat_id] = "ADMIN_MAIN"
                 save_db(db_data)
                 bot.send_message(chat_id, f"🚷 ပိတ်လိုက်ပါပြီ။", reply_markup=get_admin_menu(), parse_mode="Markdown")
-                try: send_force_start(user_text, "User")
-                except Exception: pass
-            else: bot.send_message(chat_id, "❌ ID ရှာမတွေ့ပါ။", reply_markup=get_admin_menu())
+                try: 
+                    send_force_start(user_text, "User")
+                except Exception: 
+                    pass
+            else: 
+                bot.send_message(chat_id, "❌ ID ရှာမတွေ့ပါ။", reply_markup=get_admin_menu())
             return
 
     if chat_id in db_data.get("approved_users", {}):
@@ -220,13 +236,16 @@ def handle_all_messages(message):
                 wifi_link = db_data["keys_db"][user_text]
                 old_msg_id = db_data["approved_users"][chat_id].get("last_tab_msg_id")
                 if old_msg_id:
-                    try: bot.delete_message(int(chat_id), int(old_msg_id))
-                    except Exception: pass
+                    try: 
+                        bot.delete_message(int(chat_id), int(old_msg_id))
+                    except Exception: 
+                        pass
                 db_data["user_states"][chat_id] = None
                 sent_msg = bot.send_message(chat_id, f"✅ [👉 Wi-Fi စတင်ရန် ဤနေရာကိုနှိပ်ပါ 👈]({wifi_link})", reply_markup=get_user_menu(), parse_mode="Markdown")
                 db_data["approved_users"][chat_id]["last_tab_msg_id"] = sent_msg.message_id
                 save_db(db_data)
-            else: bot.send_message(chat_id, "❌ စကားဝှက် မမှန်ပါ။")
+            else: 
+                bot.send_message(chat_id, "❌ စကားဝှက် မမှန်ပါ။")
             return
 
 # Flask Web Route for Webhook
@@ -240,13 +259,10 @@ def getMessage():
 @app.route("/")
 def webhook():
     bot.remove_webhook()
-    if RENDER_EXTERNAL_URL:
-        bot.set_webhook(url=RENDER_EXTERNAL_URL + BOT_TOKEN)
-        return "Webhook Set Successfully!", 200
-    return "Render URL missing", 400
+    bot.set_webhook(url=RENDER_EXTERNAL_URL + BOT_TOKEN)
+    return "Webhook Set Successfully!", 200
 
 if __name__ == "__main__":
-    # Render အတွက် Port ဖွင့်ပေးခြင်း
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
-    
+            
