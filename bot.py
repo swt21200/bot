@@ -3,15 +3,33 @@ import json
 import os
 from datetime import datetime
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from flask import Flask
+from threading import Thread
 
 # ==================== CONFIGURATION ====================
-# ပြင်ဆင်ပြီးသား Bot Token အသစ်
 BOT_TOKEN = "8706727466:AAF7vjFcnf-6vlLj0cqrt6ogyio9-9AFZR8"
 ADMIN_PASSWORD = "1662004win"
-DB_FILE = "user_secure_db.json"
+
+# Render Persistent Disk အတွက် လမ်းကြောင်းသတ်မှတ်ခြင်း
+# Render ပေါ်မှာဆိုရင် /data/ အောက်မှာသိမ်းမယ်၊ ကိုယ့်စက်ထဲမှာဆိုရင် လက်ရှိ folder ထဲမှာသိမ်းမယ်
+if os.path.exists("/data"):
+    DB_FILE = "/data/user_secure_db.json"
+else:
+    DB_FILE = "user_secure_db.json"
 # =======================================================
 
 bot = telebot.TeleBot(BOT_TOKEN)
+app = Flask('')
+
+# Render Port Error မတက်စေရန် ရိုးရှင်းသော Web Route တစ်ခုပြုလုပ်ခြင်း
+@app.route('/')
+def home():
+    return "Bot is running 24/7!"
+
+def run_web_server():
+    # Render သည် ပုံမှန်အားဖြင့် PORT ဆိုသော environment variable ကို ပေးတတ်သည်
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
 
 def load_db():
     if os.path.exists(DB_FILE):
@@ -105,7 +123,6 @@ def handle_all_messages(message):
     
     state = db_data["user_states"].get(chat_id)
 
-    # ==================== ADMIN PASSWORD CHECK ====================
     if state == "AWAITING_ADMIN_PASSWORD":
         if user_text == ADMIN_PASSWORD:
             db_data["user_states"][chat_id] = "ADMIN_MAIN"
@@ -117,7 +134,6 @@ def handle_all_messages(message):
             bot.send_message(chat_id, "❌ Admin စကားဝှက် မှားယွင်းပါသည်။", reply_markup=ReplyKeyboardRemove())
         return
 
-    # ==================== ADMIN MENU HANDLING ====================
     admin_buttons = [
         "✅ User အား ခွင့်ပြုချက်ပေးမည် (Approve)", 
         "❌ User အား အသုံးပြုခွင့်ပိတ်မည် (Block)", 
@@ -185,7 +201,6 @@ def handle_all_messages(message):
                 bot.send_message(chat_id, "🚪 Admin Panel မှ ထွက်ပြီးပါပြီ။", reply_markup=ReplyKeyboardRemove())
             return
 
-        # ---- Admin Action Processing ----
         if state == "AWAITING_KEY_DELETE":
             keys_dict = db_data.get("keys_db", {})
             if user_text in keys_dict:
@@ -206,7 +221,6 @@ def handle_all_messages(message):
         if state and state.startswith("AWAITING_KEY_LINK:"):
             target_key = state.split(":")[1]
             wifi_url = user_text
-            
             db_data["keys_db"][target_key] = wifi_url
             db_data["user_states"][chat_id] = "ADMIN_MAIN"
             save_db(db_data)
@@ -313,5 +327,10 @@ def handle_all_messages(message):
         bot.send_message(chat_id, pending_text, reply_markup=ReplyKeyboardRemove(), parse_mode="Markdown")
 
 if __name__ == "__main__":
+    # Web Server ကို Background Thread အနေဖြင့် စတင်ခြင်း (Port Error ကာကွယ်ရန်)
+    server_thread = Thread(target=run_web_server)
+    server_thread.daemon = True
+    server_thread.start()
+    
     print("[+] Double Secure Control Bot စတင်လည်ပတ်နေပါပြီ...")
     bot.infinity_polling()
