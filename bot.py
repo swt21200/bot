@@ -1,6 +1,7 @@
 import telebot
 import json
 import os
+import time
 from datetime import datetime
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from flask import Flask
@@ -10,24 +11,26 @@ from threading import Thread
 BOT_TOKEN = "8706727466:AAF7vjFcnf-6vlLj0cqrt6ogyio9-9AFZR8"
 ADMIN_PASSWORD = "1662004win"
 
-# Render Persistent Disk အတွက် လမ်းကြောင်းသတ်မှတ်ခြင်း
-# Render ပေါ်မှာဆိုရင် /data/ အောက်မှာသိမ်းမယ်၊ ကိုယ့်စက်ထဲမှာဆိုရင် လက်ရှိ folder ထဲမှာသိမ်းမယ်
-if os.path.exists("/data"):
-    DB_FILE = "/data/user_secure_db.json"
+# [ပြင်ဆင်ချက်] Render ပေါ်မှာ Folder မရှိရင် အတင်းဆောက်ခိုင်းပြီး ဒေတာသိမ်းမည့်စနစ်
+DB_DIR = "/data"
+if not os.path.exists(DB_DIR):
+    try:
+        os.makedirs(DB_DIR)
+        DB_FILE = os.path.join(DB_DIR, "user_secure_db.json")
+    except Exception:
+        DB_FILE = "user_secure_db.json"  # တစ်ခုခုမှားရင် လက်ရှိ folder ထဲပဲသိမ်းမယ်
 else:
-    DB_FILE = "user_secure_db.json"
+    DB_FILE = os.path.join(DB_DIR, "user_secure_db.json")
 # =======================================================
 
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask('')
 
-# Render Port Error မတက်စေရန် ရိုးရှင်းသော Web Route တစ်ခုပြုလုပ်ခြင်း
 @app.route('/')
 def home():
     return "Bot is running 24/7!"
 
 def run_web_server():
-    # Render သည် ပုံမှန်အားဖြင့် PORT ဆိုသော environment variable ကို ပေးတတ်သည်
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
@@ -87,7 +90,10 @@ def send_force_start(target_id, from_user_first_name):
         f"🆔 သင့်ရဲ့ ID: `{target_id}`\n\n"
         "⚠️ အကြောင်းကြားစာ: Admin မှ သင့်ရဲ့ အသုံးပြုခွင့်ကို ပိတ်သိမ်းလိုက်ပါသဖြင့် စာမျက်နှာအဟောင်းများ ပျက်သွားပါပြီ။ အသုံးပြုခွင့် ပြန်လည်တောင်းခံပါ။"
     )
-    bot.send_message(target_id, pending_text, reply_markup=ReplyKeyboardRemove(), parse_mode="Markdown")
+    try:
+        bot.send_message(target_id, pending_text, reply_markup=ReplyKeyboardRemove(), parse_mode="Markdown")
+    except Exception:
+        pass
 
 @bot.message_handler(commands=['start', 'help', 'admin'])
 def send_welcome(message):
@@ -326,11 +332,20 @@ def handle_all_messages(message):
         )
         bot.send_message(chat_id, pending_text, reply_markup=ReplyKeyboardRemove(), parse_mode="Markdown")
 
+# [ပြင်ဆင်ချက်] Render ပေါ်မှာ သုံးရင်းတန်းလန်း Bot Crash ဖြစ်သွားရင် Auto loop ပတ်ပြီး ပြန်နိုးပေးမည့်စနစ်
+def start_bot():
+    while True:
+        try:
+            print("[+] Double Secure Control Bot ပုံမှန်လည်ပတ်နေပါပြီ...")
+            bot.polling(none_stop=True, timeout=90)
+        except Exception as e:
+            print(f"[-] Bot Crashed: {e}. Restarting in 5 seconds...")
+            time.sleep(5)
+
 if __name__ == "__main__":
-    # Web Server ကို Background Thread အနေဖြင့် စတင်ခြင်း (Port Error ကာကွယ်ရန်)
     server_thread = Thread(target=run_web_server)
     server_thread.daemon = True
     server_thread.start()
     
-    print("[+] Double Secure Control Bot စတင်လည်ပတ်နေပါပြီ...")
-    bot.infinity_polling()
+    start_bot()
+
