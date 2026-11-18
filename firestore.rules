@@ -1,0 +1,23 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow create, update: if request.auth != null && request.auth.uid == uid;
+    }
+    match /codes/{code} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.resource.data.ownerUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+    match /redemptions/{uid} {
+      allow create: if request.auth != null && request.auth.uid == uid && !exists(/databases/$(database)/documents/redemptions/$(uid));
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow update, delete: if false;
+    }
+    match /tickets/{id} {
+      allow read: if request.auth != null && (resource.data.ownerUid == request.auth.uid || resource.data.refereeUid == request.auth.uid);
+      allow write: if false;
+    }
+  }
+}
